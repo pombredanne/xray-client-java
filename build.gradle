@@ -14,8 +14,9 @@ allprojects {
     apply plugin: 'idea'
     apply plugin: 'maven-publish'
     apply plugin: 'com.jfrog.artifactory'
+    apply plugin: 'maven'
 
-    group = 'com.jfrog.xray.client'
+    group = 'org.jfrog.xray.client'
 
     artifactory {
         contextUrl = 'https://oss.jfrog.org'
@@ -28,12 +29,12 @@ allprojects {
         publish {
             repository {
                 repoKey = 'oss-snapshot-local'   //The Artifactory repository key to publish to
-                username = project.hasProperty('artifactoryUser') ? project.artifactoryUser : getenv()['XRAY_USER']
-                password = project.hasProperty('artifactoryKey') ? project.artifactoryKey : getenv()['XRAY_KEY']
+                username = project.hasProperty('artifactoryUser') ? project.artifactoryUser : getenv()['ARTIFACTORY_USER']
+                password = project.hasProperty('artifactoryKey') ? project.artifactoryKey : getenv()['ARTIFACTORY_KEY']
             }
             defaults {
                 publications 'main'
-                properties = ['xray.repo': 'jfrog/xray-tools', 'xray.package': 'xray-client-java', 'xray.version': version.toString()]
+                properties = ['xray.repo': 'jfrog/jfrog-jars', 'xray.package': 'xray-client-java', 'xray.version': version.toString()]
             }
         }
     }
@@ -51,20 +52,13 @@ subprojects() {
     sourceCompatibility = 1.7
     targetCompatibility = 1.7
 
-
     dependencies {
         compile addSlf4J('slf4j-api')
         compile addSlf4J('log4j-over-slf4j')
         compile addSlf4J('jcl-over-slf4j')
-        compile 'org.jfrog.common:jfrog-http-client:1.0.2'
-        compile 'ch.qos.logback:logback-classic:1.0.10'
-        compile 'joda-time:joda-time:2.2'
         compile 'commons-io:commons-io:2.1'
-        compile 'org.codehaus.jackson:jackson-mapper-asl:1.9.5'
-        compile("org.apache.httpcomponents:httpclient:4.5.1") {
-            exclude group: 'commons-logging' //DO NOT REMOVE
-        }
-        testCompile group: 'org.testng', name: 'testng', version: '6.5.2'
+        compile "com.fasterxml.jackson.core:jackson-databind:2.8.1"
+        compile group: 'com.fasterxml.jackson.core', name: 'jackson-core', version: '2.8.1'
     }
 
     task sourcesJar(type: Jar) {
@@ -80,7 +74,6 @@ subprojects() {
     task testResultsZip(type: Zip) {
         classifier = 'testreports'
         from testReportDir
-
     }
 
     test {
@@ -95,10 +88,8 @@ subprojects() {
         }
         //Have the XraySpecSuite run all tests
         exclude 'com/jfrog/xray/client/test/spec'
-
         finalizedBy(testResultsZip)
     }
-
 
     publishing {
         publications {
@@ -115,7 +106,7 @@ subprojects() {
                         appendNode('packaging', 'jar')
                         appendNode('name', 'Xray Java client')
                         appendNode('description', 'Java client for working with Xray')
-                        appendNode('url', 'https://github.com/xray/xray-client-java')
+                        appendNode('url', 'https://github.com/jfrogdev/xray-client-java')
                         appendNode('licenses').with {
                             appendNode('license').with {
                                 appendNode('name', 'The Apache Software License, Version 2.0')
@@ -142,7 +133,7 @@ subprojects() {
                         appendNode('scm').with {
                             appendNode('connection', 'git@github.com:JFrogDev/xray/xray-client-java.git')
                             appendNode('developerConnection', 'git@github.com:xray/xray-client-java.git')
-                            appendNode('url', 'https://github.com/xray/xray-client-java')
+                            appendNode('url', 'https://github.com/jfrogdev/xray-client-java')
                         }
                     }
                     asNode().dependencies.'*'.findAll() {
@@ -162,6 +153,17 @@ project(':xray-client-java-service') {
     dependencies {
         compile project(':xray-client-java-api')
         compile 'commons-lang:commons-lang:2.6'
+        compile 'org.jfrog.common:jfrog-http-client:1.0.2'
+        testCompile group: 'org.testng', name: 'testng', version: '6.5.2'
+    }
+
+    test {
+        useTestNG()
+        testLogging {
+            exceptionFormat "full"
+            events "started", "passed", "skipped", "failed", "standardOut", "standardError"
+            minGranularity 0
+        }
     }
 }
 

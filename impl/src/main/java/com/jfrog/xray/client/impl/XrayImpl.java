@@ -1,27 +1,34 @@
 package com.jfrog.xray.client.impl;
 
 import com.jfrog.xray.client.Xray;
-import com.jfrog.xray.client.impl.services.system.System;
+import com.jfrog.xray.client.impl.services.binarymanagers.BinaryManagersImpl;
 import com.jfrog.xray.client.impl.services.system.SystemImpl;
-import org.apache.http.HttpException;
+import com.jfrog.xray.client.impl.services.summary.SummaryImpl;
+import com.jfrog.xray.client.impl.util.URIUtil;
+import com.jfrog.xray.client.services.binarymanagers.BinaryManagers;
+import com.jfrog.xray.client.services.summary.Summary;
+import com.jfrog.xray.client.services.system.System;
+import org.apache.commons.io.IOUtils;
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.ResponseHandler;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpHead;
-import org.apache.http.client.methods.HttpRequestBase;
-import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.client.methods.*;
 import org.apache.http.client.protocol.HttpClientContext;
 import org.apache.http.client.utils.HttpClientUtils;
 import org.apache.http.entity.ContentType;
+import org.apache.http.entity.InputStreamEntity;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.DefaultHttpResponseFactory;
 import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.protocol.BasicHttpContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.net.MalformedURLException;
-import java.net.URL;
+import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -33,14 +40,16 @@ import java.util.concurrent.Callable;
 public class XrayImpl implements Xray {
     private static final Logger log = LoggerFactory.getLogger(XrayImpl.class);
     private static final String API_BASE = "/api/v1/";
+    private final BasicHttpContext localContext;
 
     private CloseableHttpClient client;
-    private URL baseApiUrl;
     private ResponseHandler<HttpResponse> responseHandler = new XrayResponseHandler();
+    private String baseApiUrl;
 
-    public XrayImpl(CloseableHttpClient client, String url) throws MalformedURLException {
+    public XrayImpl(CloseableHttpClient client, String url) {
         this.client = client;
-        this.baseApiUrl = new URL(new URL(url), API_BASE);
+        this.baseApiUrl = URIUtil.concatUrl(url, API_BASE);
+        localContext = new BasicHttpContext();
     }
 
     static public void addContentTypeJsonHeader(Map<String, String> headers) {
@@ -63,6 +72,16 @@ public class XrayImpl implements Xray {
     }
 
     @Override
+    public BinaryManagers binaryManagers() {
+        return new BinaryManagersImpl(this);
+    }
+
+    @Override
+    public Summary summary() {
+        return new SummaryImpl(this);
+    }
+
+    @Override
     public void close() {
         HttpClientUtils.closeQuietly(client);
     }
@@ -75,32 +94,38 @@ public class XrayImpl implements Xray {
         }
     }
 
-    public HttpResponse get(String uri, Map<String, String> headers) throws HttpException, IOException {
+    public HttpResponse get(String uri, Map<String, String> headers) throws IOException {
         HttpGet getRequest = new HttpGet(createUrl(uri));
         return setHeadersAndExecute(getRequest, headers);
     }
 
-    public HttpResponse head(String uri, Map<String, String> headers) throws HttpException, IOException {
+    public HttpResponse head(String uri, Map<String, String> headers) throws IOException {
         HttpHead headRequest = new HttpHead(createUrl(uri));
         return setHeadersAndExecute(headRequest, headers);
     }
 
-    private String createUrl(String queryPath) throws MalformedURLException {
+    public HttpResponse post(String uri, Map<String, String> headers, InputStream elementInputStream) throws IOException {
+        HttpPost postRequest = new HttpPost(createUrl(uri));
+        HttpEntity requestEntity = new InputStreamEntity(elementInputStream);
+        postRequest.setEntity(requestEntity);
+        return setHeadersAndExecute(postRequest, headers);
+    }
+
+    private String createUrl(String queryPath) {
         log.debug("Trying to encode uri: '{}' with base url: {}", queryPath, API_BASE);
-        return new URL(baseApiUrl, queryPath).toString();
+        return URIUtil.concatUrl(baseApiUrl, queryPath);
     }
 
     private HttpResponse setHeadersAndExecute(HttpUriRequest request, Map<String, String> headers) throws IOException {
         setHeaders(request, headers);
-        return execute(request, null);
+        return execute(request);
     }
 
-
-    private HttpResponse execute(HttpUriRequest request, HttpClientContext context) throws IOException {
+    private HttpResponse execute(HttpUriRequest request) throws IOException {
         log.debug("Executing {} request to path '{}', with headers: {}", request.getMethod(), request.getURI(),
                 Arrays.toString(request.getAllHeaders()));
-        if (context != null) {
-            return client.execute(request, responseHandler, context);
+        if (localContext != null) {
+            return client.execute(request, responseHandler, localContext);
         } else {
             return client.execute(request, responseHandler);
         }
@@ -129,11 +154,39 @@ public class XrayImpl implements Xray {
         }
     }
 
+    /**
+     * gets responses from the underlying HttpClient and closes them (so you don't have to) the response body is
+     * buffered in an intermediary byte array.
+     * Will throw a {@link IOException} if the request failed.
+     */
     private class XrayResponseHandler implements ResponseHandler<HttpResponse> {
 
         @Override
-        public HttpResponse handleResponse(HttpResponse response) {
-            return response;
+        public HttpResponse handleResponse(HttpResponse response) throws IOException {
+            int statusCode = response.getStatusLine().getStatusCode();
+            if (statusNotOk(statusCode)) {
+                //We're using CloseableHttpClient so it's ok
+                HttpClientUtils.closeQuietly((CloseableHttpResponse) response);
+                throw new IOException(response.getStatusLine().toString());
+            }
+
+            //Response entity might be null, 500 and 405 also give the html itself so skip it
+            String entity = "";
+            if (response.getEntity() != null && statusCode != 500 && statusCode != 405) {
+                try {
+                    entity = IOUtils.toString(response.getEntity().getContent());
+                } catch (IOException | NullPointerException e) {
+                    //Null entity - Ignore
+                } finally {
+                    HttpClientUtils.closeQuietly((CloseableHttpResponse) response);
+                }
+            }
+
+            HttpResponse newResponse = DefaultHttpResponseFactory.INSTANCE.newHttpResponse(response.getStatusLine(),
+                    new HttpClientContext());
+            newResponse.setEntity(new StringEntity(entity, Charset.forName("UTF-8")));
+            newResponse.setHeaders(response.getAllHeaders());
+            return newResponse;
         }
     }
 }

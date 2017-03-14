@@ -53,6 +53,16 @@ public class URIUtil {
 
     private static final String UTF8_CHARSET_NAME = "UTF-8";
 
+    public static String concatUrl(String url1, String url2) {
+        if (url1.endsWith("/") && url2.startsWith("/")) {
+            return url1 + url2.substring(1);
+        }
+        if (url1.endsWith("/") || url2.startsWith("/")) {
+            return url1 + url2;
+        }
+        return url1 + "/" + url2;
+    }
+
     /**
      * Escape and encode a string regarded as the query component of an URI with
      * the default protocol charset.

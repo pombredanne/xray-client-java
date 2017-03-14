@@ -1,4 +1,4 @@
-package com.jfrog.xray.client.impl.services.system;
+package com.jfrog.xray.client.services.system;
 
 public interface Version {
 

@@ -1,4 +1,4 @@
-package com.jfrog.xray.client.test;
+package com.jfrog.xray.client.impl.test;
 
 import com.jfrog.xray.client.Xray;
 import org.testng.annotations.AfterClass;
@@ -6,10 +6,11 @@ import org.testng.annotations.BeforeClass;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URISyntaxException;
 import java.util.Properties;
 
 import static com.jfrog.xray.client.impl.XrayClient.create;
-import static org.testng.AssertJUnit.fail;
+import static org.junit.Assert.fail;
 
 
 /**
@@ -25,7 +26,7 @@ public class XrayTestsBase {
     protected Xray xray;
 
     @BeforeClass
-    public void init() throws IOException {
+    public void init() throws IOException, URISyntaxException {
 
         Properties props = new Properties();
         // This file is not in GitHub. Create your own in src/test/resources.
@@ -79,10 +80,8 @@ public class XrayTestsBase {
         fail(message);
     }
 
-
     @AfterClass
     public void clean() throws IOException {
         xray.close();
     }
-
 }
